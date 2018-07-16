@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothServerSocket;
+import android.bluetooth.BluetoothSocket;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -24,10 +26,16 @@ import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Set;
+import java.util.UUID;
+
+import static android.content.ContentValues.TAG;
 
 public class MainBluetoothActivity extends AppCompatActivity {
+
+    private static final UUID appUUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
 
     private static final int ENABLE_BT_REQUEST_CODE = 1, ACTION_REQUEST_MULTIPLE_PERMISSION = 3;
 
@@ -38,8 +46,10 @@ public class MainBluetoothActivity extends AppCompatActivity {
     private int state_current = -5;
 
     private TextView tv_state;
-    private String myMacAddress, opponentMacAddress;
+    private String myMacAddress, opponentMacAddress, myName;
     private BluetoothAdapter bluetoothAdapter;
+    private BluetoothServerSocket serverSocket;
+    private BluetoothSocket bluetoothSocket;
     private ArrayList<String> aListPaired, aListNearby;
     private ListView listViewPaired, listViewNearby;
     private FloatingActionButton blueBtn;
@@ -64,6 +74,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
 
         if(checkCompatibility()){
             initialize();
+
             //get paired devices list
             listPairedDevices();
         }
@@ -88,6 +99,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
         initButtons();
         //enable BT
         //enableBluetooth();
+        myName = bluetoothAdapter.getName();
         //enter in discoverable mode
         setDiscoverable();
         // register a broadcastReceiver to be notified when a new device is discovered
@@ -196,10 +208,33 @@ public class MainBluetoothActivity extends AppCompatActivity {
         discoveryIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 180);
         startActivity(discoveryIntent);
     }
+
     private boolean startScanning(){
         listViewPaired.setVisibility(View.INVISIBLE);
         listViewNearby.setVisibility(View.VISIBLE);
         return bluetoothAdapter.startDiscovery();
+    }
+
+    private void connectAsServer() {
+        state_current = STATE_CONNECTING;
+        //run a separate thread waiting for a client request
+        AcceptThread thread = new AcceptThread();
+        thread.start();
+    }
+
+    private void connectAsClient(BluetoothDevice targetDevice){
+        state_current = STATE_CONNECTING;
+        //run a separate thread that attempts to connect to targetDevice
+        ConnectThread thread = new ConnectThread(targetDevice);
+        thread.start();
+    }
+    private void manageMyConnectedSocket(BluetoothSocket socket){
+        state_current = STATE_CONNECTED;
+        bluetoothSocket = socket;
+        //if(client)
+        //else
+        //TODO
+        //https://developer.android.com/guide/topics/connectivity/bluetooth
     }
 
     @Override
@@ -259,15 +294,105 @@ public class MainBluetoothActivity extends AppCompatActivity {
 
     }
 
-    private final BroadcastReceiver powerOnReceiver = new BroadcastReceiver() {
-
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            final String action = intent.getAction();
-
-
+    private class AcceptThread extends Thread {
+        public AcceptThread() {
+            // Use a temporary object that is later assigned to mmServerSocket
+            // because mmServerSocket is final.
+            BluetoothServerSocket tmp = null;
+            try {
+                // MY_UUID is the app's UUID string, also used by the client code.
+                tmp = bluetoothAdapter.listenUsingRfcommWithServiceRecord(myName, appUUID);
+            } catch (IOException e) {
+                Log.e(TAG, "Socket's listen() method failed", e);
+            }
+            serverSocket = tmp;
         }
-    };
+
+        public void run() {
+            BluetoothSocket socket = null;
+            // Keep listening until exception occurs or a socket is returned.
+            while (true) {
+                try {
+                    socket = serverSocket.accept();
+                } catch (IOException e) {
+                    Log.e(TAG, "Socket's accept() method failed", e);
+                    break;
+                }
+
+                if (socket != null) {
+                    // A connection was accepted. Perform work associated with
+                    // the connection in a separate thread.
+                    manageMyConnectedSocket(socket);
+                    cancel();
+                    break;
+                }
+            }
+        }
+
+        // Closes the connect socket and causes the thread to finish.
+        public void cancel() {
+            try {
+                serverSocket.close();
+            } catch (IOException e) {
+                Log.e(TAG, "Could not close the connect socket", e);
+            }
+        }
+    }
+
+    private class ConnectThread extends Thread {
+        private final BluetoothSocket mmSocket;
+        private final BluetoothDevice mmDevice;
+
+        public ConnectThread(BluetoothDevice device) {
+            // Use a temporary object that is later assigned to mmSocket
+            // because mmSocket is final.
+            BluetoothSocket tmp = null;
+            mmDevice = device;
+
+            try {
+                // Get a BluetoothSocket to connect with the given BluetoothDevice.
+                // MY_UUID is the app's UUID string, also used in the server code.
+                tmp = device.createRfcommSocketToServiceRecord(appUUID);
+            } catch (IOException e) {
+                Log.e(TAG, "Socket's create() method failed", e);
+            }
+            mmSocket = tmp;
+        }
+
+        public void run() {
+            // Cancel discovery because it otherwise slows down the connection.
+            // You should always call cancelDiscovery() before connect()
+            bluetoothAdapter.cancelDiscovery();
+
+            try {
+                // Connect to the remote device through the socket. This call blocks
+                // until it succeeds or throws an exception.
+                mmSocket.connect();
+            } catch (IOException connectException) {
+                // Unable to connect; close the socket and return.
+                try {
+                    mmSocket.close();
+                } catch (IOException closeException) {
+                    Log.e(TAG, "Could not close the client socket", closeException);
+                }
+                return;
+            }
+
+            // The connection attempt succeeded. Perform work associated with
+            // the connection in a separate thread.
+            manageMyConnectedSocket(mmSocket);
+        }
+
+        // Closes the client socket and causes the thread to finish.
+        public void cancel() {
+            try {
+                mmSocket.close();
+            } catch (IOException e) {
+                Log.e(TAG, "Could not close the client socket", e);
+            }
+        }
+    }
+
     private final BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
