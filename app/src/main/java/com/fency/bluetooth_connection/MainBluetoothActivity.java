@@ -21,6 +21,7 @@ import android.util.Log;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
 import android.widget.TextView;
@@ -39,9 +40,8 @@ public class MainBluetoothActivity extends AppCompatActivity {
 
     private static final int ENABLE_BT_REQUEST_CODE = 1, ACTION_REQUEST_MULTIPLE_PERMISSION = 3;
 
-    private static final int STATE_BT_OFF = -1, STATE_NOT_DISCOVERABLE = 0;
-    private static final int STATE_DISCOVERABLE = 2;
-    private static final int STATE_SCANNING = 3, STATE_CONNECTING = 4, STATE_CONNECTED = 5;
+    private static final int STATE_BT_OFF = -1, STATE_NOT_DISCOVERABLE = 0, STATE_DISCOVERABLE = 2,
+            STATE_SCANNING = 3, STATE_CONNECTING = 4, STATE_CONNECTED = 5;
 
     private int state_current = -5;
 
@@ -50,7 +50,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothServerSocket serverSocket;
     private BluetoothSocket bluetoothSocket;
-    private ArrayList<String> aListPaired, aListNearby;
+    private ArrayList<BluetoothDevice> aListPaired, aListNearby;
     private ListView listViewPaired, listViewNearby;
     private FloatingActionButton blueBtn;
     @Override
@@ -95,7 +95,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
     }
     private void initialize(){
         checkPermissions();
-        state_current = getStartingState();
+        goToState(getStartingState());
         initButtons();
         //enable BT
         //enableBluetooth();
@@ -148,6 +148,11 @@ public class MainBluetoothActivity extends AppCompatActivity {
         return state;
     }
 
+    private void goToState(int targetState){
+        state_current = targetState;
+        tv_state.setText("stato: " + state_current);
+    }
+
     private void initButtons(){
         blueBtn.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -159,21 +164,18 @@ public class MainBluetoothActivity extends AppCompatActivity {
                     //start discovering nearby devices
                     if (startScanning()) {
                         blueBtn.setBackgroundTintList(ColorStateList.valueOf(Color.BLUE));
-                        Snackbar.make(view, "Scanning...", Snackbar.LENGTH_LONG)
-                                .setAction("Action", null).show();
+                        Snackbar.make(view, "Scanning...", Snackbar.LENGTH_LONG).show();
                     } else {
                         // error occurred
                         blueBtn.setBackgroundTintList(ColorStateList.valueOf(Color.RED));
                     }
                 }
                 else if (state_current == STATE_SCANNING) {
-                    Snackbar.make(view, "Still scanning!", Snackbar.LENGTH_LONG)
-                            .setAction("Action2", null).show();
+                    Snackbar.make(view, "Still scanning!", Snackbar.LENGTH_LONG).show();
                 }
                 else {
                     //TODO
                 }
-                tv_state.setText("stato: "+state_current);
             }
         });
     }
@@ -193,14 +195,30 @@ public class MainBluetoothActivity extends AppCompatActivity {
         Set<BluetoothDevice> pairedDevices = bluetoothAdapter.getBondedDevices();
 
         for(BluetoothDevice device : pairedDevices) {
-            aListPaired.add(device.getName() + "\n" + device.getAddress());
+            aListPaired.add(device);
             Log.i("BT", device.getName() + "\n" + device.getAddress());
         }
 
         listViewPaired.setAdapter(new ArrayAdapter<>(
                 getApplicationContext(),
-                android.R.layout.simple_list_item_1,
+                android.R.layout.simple_selectable_list_item,
                 aListPaired));
+
+        listViewPaired.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> list, View view, int position, long id) {
+                // Get the selected item text from ListView
+                BluetoothDevice selectedItem = (BluetoothDevice) list.getItemAtPosition(position);
+
+                Log.i("HelloListView",
+                        "You clicked Item: " + id + " at position:" + position);
+                Toast.makeText(
+                        getApplicationContext(),
+                        "Clicked at position "+position+ " the device: "+ selectedItem.getName(),
+                        Toast.LENGTH_SHORT)
+                        .show();
+            }
+        });
     }
 
     private void setDiscoverable(){
@@ -210,28 +228,41 @@ public class MainBluetoothActivity extends AppCompatActivity {
     }
 
     private boolean startScanning(){
+        listViewPaired.setOnItemClickListener(null);
         listViewPaired.setVisibility(View.INVISIBLE);
         listViewNearby.setVisibility(View.VISIBLE);
         return bluetoothAdapter.startDiscovery();
     }
 
     private void connectAsServer() {
-        state_current = STATE_CONNECTING;
+        goToState(STATE_CONNECTING);
         //run a separate thread waiting for a client request
         AcceptThread thread = new AcceptThread();
         thread.start();
+        Toast.makeText(getApplicationContext(),
+                "trying connection as server", Toast.LENGTH_SHORT).show();
     }
 
     private void connectAsClient(BluetoothDevice targetDevice){
-        state_current = STATE_CONNECTING;
+        goToState(STATE_CONNECTING);
         //run a separate thread that attempts to connect to targetDevice
         ConnectThread thread = new ConnectThread(targetDevice);
         thread.start();
+        Toast.makeText(
+                getApplicationContext(),
+                "trying connection as client to "+ targetDevice.getName(),
+                Toast.LENGTH_SHORT)
+                .show();
     }
     private void manageMyConnectedSocket(BluetoothSocket socket){
-        state_current = STATE_CONNECTED;
+        goToState(STATE_CONNECTED);
         bluetoothSocket = socket;
-        //if(client)
+        Toast.makeText(
+                getApplicationContext(),
+                "connected to device ",
+                Toast.LENGTH_LONG)
+                .show();
+        //if(isClient)
         //else
         //TODO
         //https://developer.android.com/guide/topics/connectivity/bluetooth
@@ -370,11 +401,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
                 mmSocket.connect();
             } catch (IOException connectException) {
                 // Unable to connect; close the socket and return.
-                try {
-                    mmSocket.close();
-                } catch (IOException closeException) {
-                    Log.e(TAG, "Could not close the client socket", closeException);
-                }
+                cancel();
                 return;
             }
 
@@ -401,8 +428,8 @@ public class MainBluetoothActivity extends AppCompatActivity {
                 //….retrieve the BluetoothDevice object and its EXTRA_DEVICE field,
                 //which contains information about the device’s characteristics and capabilities//
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                if (!aListNearby.contains(device.getName() + "\n" + device.getAddress())) {
-                    aListNearby.add(device.getName() + "\n" + device.getAddress());
+                if (!aListNearby.contains(device)) {
+                    aListNearby.add(device);
                     listViewNearby.setAdapter(new ArrayAdapter<>(
                             getApplicationContext(),
                             android.R.layout.simple_list_item_1,
@@ -413,13 +440,13 @@ public class MainBluetoothActivity extends AppCompatActivity {
                 }
             }
             else if (BluetoothAdapter.ACTION_DISCOVERY_STARTED.equals(action)){
-                state_current = STATE_SCANNING;
+                goToState(STATE_SCANNING);
                 Toast.makeText(getApplicationContext(),
                         "cerco dispositivi vicini...",
                         Toast.LENGTH_SHORT).show();
             }
             else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)){
-                state_current = STATE_DISCOVERABLE;
+                goToState(STATE_DISCOVERABLE);
                 Toast.makeText(getApplicationContext(),
                         "fine ricerca.",
                         Toast.LENGTH_SHORT).show();
@@ -429,14 +456,14 @@ public class MainBluetoothActivity extends AppCompatActivity {
                 switch(state) {
                     case BluetoothAdapter.STATE_OFF:
                         Toast.makeText(getApplicationContext(),"BT off!",Toast.LENGTH_SHORT).show();
-                        state_current = STATE_BT_OFF;
+                        goToState(STATE_BT_OFF);
                         break;
                     case BluetoothAdapter.STATE_TURNING_OFF:
                         Toast.makeText(getApplicationContext(),"BT closing...",Toast.LENGTH_SHORT).show();
-                        state_current = STATE_BT_OFF;
+                        goToState(STATE_BT_OFF);
                         break;
                     case BluetoothAdapter.STATE_ON:
-                        state_current = STATE_NOT_DISCOVERABLE;
+                        goToState(STATE_NOT_DISCOVERABLE);
                         Toast.makeText(getApplicationContext(),"BT ready!",Toast.LENGTH_SHORT).show();
                         //unregisterReceiver(this);
                         break;
@@ -444,28 +471,26 @@ public class MainBluetoothActivity extends AppCompatActivity {
                         Toast.makeText(getApplicationContext(),"BT opening...",Toast.LENGTH_SHORT).show();
                         break;
                 }
-                tv_state.setText("stato: "+ state_current);
             }
             else if (BluetoothAdapter.ACTION_SCAN_MODE_CHANGED.equals(action)){
                 final int mode = intent.getIntExtra(BluetoothAdapter.EXTRA_SCAN_MODE, BluetoothAdapter.ERROR);
                 switch(mode) {
                     case BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE:
-                        state_current = STATE_DISCOVERABLE;
+                        goToState(STATE_DISCOVERABLE);
                         Toast.makeText(getApplicationContext(),
                                 "Device is now discoverable",Toast.LENGTH_SHORT).show();
                         break;
                     case BluetoothAdapter.SCAN_MODE_CONNECTABLE:
-                        state_current = STATE_NOT_DISCOVERABLE;
+                        goToState(STATE_NOT_DISCOVERABLE);
                         Toast.makeText(getApplicationContext(),
                                 "Device is not discoverable but connectable",Toast.LENGTH_SHORT).show();
                         break;
                     case BluetoothAdapter.SCAN_MODE_NONE:
-                        state_current = STATE_NOT_DISCOVERABLE;
+                        goToState(STATE_NOT_DISCOVERABLE);
                         Toast.makeText(getApplicationContext(),
                                 "Device isn't discoverable nor connectable",Toast.LENGTH_SHORT).show();
                         break;
                 }
-                tv_state.setText("stato: "+ state_current);
             }
         }
     };
