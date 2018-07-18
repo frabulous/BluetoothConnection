@@ -52,7 +52,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
     private BluetoothSocket bluetoothSocket;
     private ArrayList<BluetoothDevice> aListPaired, aListNearby;
     private ListView listViewPaired, listViewNearby;
-    private FloatingActionButton blueBtn;
+    private FloatingActionButton discoverBtn, serverBtn;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -65,7 +65,8 @@ public class MainBluetoothActivity extends AppCompatActivity {
         aListPaired = new ArrayList<>();
         aListNearby = new ArrayList<>();
 
-        blueBtn = findViewById(R.id.fab);
+        discoverBtn = findViewById(R.id.fab);
+        serverBtn = findViewById(R.id.fab2);
         tv_state = findViewById(R.id.tv_state);
 
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
@@ -154,7 +155,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
     }
 
     private void initButtons(){
-        blueBtn.setOnClickListener(new View.OnClickListener() {
+        discoverBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 if(state_current <= STATE_NOT_DISCOVERABLE){
@@ -163,11 +164,11 @@ public class MainBluetoothActivity extends AppCompatActivity {
                 else if (state_current == STATE_DISCOVERABLE) {
                     //start discovering nearby devices
                     if (startScanning()) {
-                        blueBtn.setBackgroundTintList(ColorStateList.valueOf(Color.BLUE));
+                        discoverBtn.setBackgroundTintList(ColorStateList.valueOf(Color.BLUE));
                         Snackbar.make(view, "Scanning...", Snackbar.LENGTH_LONG).show();
                     } else {
                         // error occurred
-                        blueBtn.setBackgroundTintList(ColorStateList.valueOf(Color.RED));
+                        discoverBtn.setBackgroundTintList(ColorStateList.valueOf(Color.RED));
                     }
                 }
                 else if (state_current == STATE_SCANNING) {
@@ -175,6 +176,16 @@ public class MainBluetoothActivity extends AppCompatActivity {
                 }
                 else {
                     //TODO
+                }
+            }
+        });
+        serverBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (state_current == STATE_DISCOVERABLE){
+                    connectAsServer();
+                    serverBtn.setBackgroundTintList(ColorStateList.valueOf(Color.YELLOW));
+                    Snackbar.make(view, "Waiting for a client", Snackbar.LENGTH_LONG).show();
                 }
             }
         });
@@ -209,6 +220,10 @@ public class MainBluetoothActivity extends AppCompatActivity {
             public void onItemClick(AdapterView<?> list, View view, int position, long id) {
                 // Get the selected item text from ListView
                 BluetoothDevice selectedItem = (BluetoothDevice) list.getItemAtPosition(position);
+                if(state_current == STATE_DISCOVERABLE || state_current == STATE_NOT_DISCOVERABLE ||
+                        state_current == STATE_SCANNING){
+                    connectAsClient(selectedItem);
+                }
 
                 Log.i("HelloListView",
                         "You clicked Item: " + id + " at position:" + position);
@@ -282,7 +297,8 @@ public class MainBluetoothActivity extends AppCompatActivity {
         int id = item.getItemId();
 
         //noinspection SimplifiableIfStatement
-        if (id == R.id.action_settings) {
+        if (id == R.id.action_list_paired) {
+            listPairedDevices();
             return true;
         }
         return super.onOptionsItemSelected(item);
@@ -437,6 +453,26 @@ public class MainBluetoothActivity extends AppCompatActivity {
                     Toast.makeText(getApplicationContext(),
                             "found device "+device.getName()+" | MAC address: "+device.getAddress(),
                             Toast.LENGTH_SHORT).show();
+
+                    listViewNearby.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+                        @Override
+                        public void onItemClick(AdapterView<?> list, View view, int position, long id) {
+                            // Get the selected item text from ListView
+                            BluetoothDevice selectedItem = (BluetoothDevice) list.getItemAtPosition(position);
+                            if(state_current == STATE_DISCOVERABLE || state_current == STATE_NOT_DISCOVERABLE ||
+                                    state_current == STATE_SCANNING){
+                                connectAsClient(selectedItem);
+                            }
+
+                            Log.i("HelloListView",
+                                    "You clicked Item: " + id + " at position:" + position);
+                            Toast.makeText(
+                                    getApplicationContext(),
+                                    "Clicked at position "+position+ " the device: "+ selectedItem.getName(),
+                                    Toast.LENGTH_SHORT)
+                                    .show();
+                        }
+                    });
                 }
             }
             else if (BluetoothAdapter.ACTION_DISCOVERY_STARTED.equals(action)){
@@ -489,6 +525,21 @@ public class MainBluetoothActivity extends AppCompatActivity {
                         goToState(STATE_NOT_DISCOVERABLE);
                         Toast.makeText(getApplicationContext(),
                                 "Device isn't discoverable nor connectable",Toast.LENGTH_SHORT).show();
+                        break;
+                }
+            }
+            else if (BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED.equals(action)){
+                final int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+                switch(state) {
+                    case BluetoothAdapter.STATE_CONNECTING:
+                        break;
+                    case BluetoothAdapter.STATE_CONNECTED:
+                        Toast.makeText(getApplicationContext(), "Connesso!", Toast.LENGTH_SHORT).show();
+                        break;
+                    case BluetoothAdapter.STATE_DISCONNECTING:
+                        break;
+                    case BluetoothAdapter.STATE_DISCONNECTED:
+                        Toast.makeText(getApplicationContext(), "Disconnesso!", Toast.LENGTH_SHORT).show();
                         break;
                 }
             }
