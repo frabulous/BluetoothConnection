@@ -21,6 +21,7 @@ import android.util.Log;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.Window;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
@@ -64,6 +65,8 @@ public class MainBluetoothActivity extends AppCompatActivity {
         listViewNearby = findViewById(R.id.lv_nearby);
         aListPaired = new ArrayList<>();
         aListNearby = new ArrayList<>();
+        setListOnClickListener(listViewPaired);
+        setListOnClickListener(listViewNearby);
 
         discoverBtn = findViewById(R.id.fab);
         serverBtn = findViewById(R.id.fab2);
@@ -98,12 +101,13 @@ public class MainBluetoothActivity extends AppCompatActivity {
         checkPermissions();
         goToState(getStartingState());
         initButtons();
-        //enable BT
-        //enableBluetooth();
+
         myName = bluetoothAdapter.getName();
-        //enter in discoverable mode
+
+        //enter in discoverable mode (and, eventually, enable BT)
         setDiscoverable();
-        // register a broadcastReceiver to be notified when a new device is discovered
+
+        // register a broadcastReceiver to be notified about bluetooth events
         IntentFilter filter = new IntentFilter();
         filter.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
         filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_STARTED);
@@ -141,6 +145,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
         if (!bluetoothAdapter.isEnabled())
             state = STATE_BT_OFF;
         else {
+            //TODO: check if this condition is the right one
             if (bluetoothAdapter.getScanMode() != BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE)
                 state = STATE_NOT_DISCOVERABLE;
             else
@@ -191,49 +196,26 @@ public class MainBluetoothActivity extends AppCompatActivity {
         });
     }
 
-    /*private void enableBluetooth() {
-        if (!bluetoothAdapter.isEnabled()) {
-            Intent enableIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-            startActivityForResult(enableIntent, ENABLE_BT_REQUEST_CODE);
-            Toast.makeText(getApplicationContext(), "Enabling Bluetooth!", Toast.LENGTH_LONG).show();
-        }
-    }*/
-
     private void listPairedDevices(){
         listViewPaired.setVisibility(View.VISIBLE);
         listViewNearby.setVisibility(View.INVISIBLE);
 
-        Set<BluetoothDevice> pairedDevices = bluetoothAdapter.getBondedDevices();
+        ArrayList<String> aList_string = new ArrayList<>();
+        Set<BluetoothDevice> pairedDevicesSet = bluetoothAdapter.getBondedDevices();
 
-        for(BluetoothDevice device : pairedDevices) {
-            aListPaired.add(device);
-            Log.i("BT", device.getName() + "\n" + device.getAddress());
+        for(BluetoothDevice device : pairedDevicesSet) {
+            if (!aListPaired.contains(device)) {
+                aListPaired.add(device);
+                aList_string.add(device.getName() + "\n" + device.getAddress());
+
+                Log.i("BT", device.getName() + "\n" + device.getAddress());
+            }
         }
 
         listViewPaired.setAdapter(new ArrayAdapter<>(
                 getApplicationContext(),
                 android.R.layout.simple_selectable_list_item,
-                aListPaired));
-
-        listViewPaired.setOnItemClickListener(new AdapterView.OnItemClickListener() {
-            @Override
-            public void onItemClick(AdapterView<?> list, View view, int position, long id) {
-                // Get the selected item text from ListView
-                BluetoothDevice selectedItem = (BluetoothDevice) list.getItemAtPosition(position);
-                if(state_current == STATE_DISCOVERABLE || state_current == STATE_NOT_DISCOVERABLE ||
-                        state_current == STATE_SCANNING){
-                    connectAsClient(selectedItem);
-                }
-
-                Log.i("HelloListView",
-                        "You clicked Item: " + id + " at position:" + position);
-                Toast.makeText(
-                        getApplicationContext(),
-                        "Clicked at position "+position+ " the device: "+ selectedItem.getName(),
-                        Toast.LENGTH_SHORT)
-                        .show();
-            }
-        });
+                aList_string));
     }
 
     private void setDiscoverable(){
@@ -281,6 +263,34 @@ public class MainBluetoothActivity extends AppCompatActivity {
         //else
         //TODO
         //https://developer.android.com/guide/topics/connectivity/bluetooth
+    }
+
+    private void setListOnClickListener(ListView list){
+        list.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> list, View view, int position, long id) {
+                // Get the selected item text from ListView
+                String selectedItem = (String) list.getItemAtPosition(position);
+                if (state_current == STATE_DISCOVERABLE || state_current == STATE_NOT_DISCOVERABLE ||
+                        state_current == STATE_SCANNING)
+                {
+                    ArrayList<BluetoothDevice> arrayList = aListPaired;
+                    if (list.equals(listViewNearby))
+                        arrayList = aListNearby;
+                    else if (list.equals(aListPaired))
+                        arrayList = aListPaired;
+
+                    for (BluetoothDevice device : arrayList){
+                        if (selectedItem.equals(device.getName() +"\n"+ device.getAddress())){
+                            connectAsClient(device);
+                            return;
+                        }
+                    }
+                }
+                Log.i("HelloListView",
+                        "You clicked Item: " + id + " at position:" + position);
+            }
+        });
     }
 
     @Override
@@ -444,35 +454,14 @@ public class MainBluetoothActivity extends AppCompatActivity {
                 //….retrieve the BluetoothDevice object and its EXTRA_DEVICE field,
                 //which contains information about the device’s characteristics and capabilities//
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                ArrayList<String> aList_string = new ArrayList<>();
                 if (!aListNearby.contains(device)) {
                     aListNearby.add(device);
+                    aList_string.add(device.getName() + "\n" + device.getAddress());
                     listViewNearby.setAdapter(new ArrayAdapter<>(
                             getApplicationContext(),
                             android.R.layout.simple_list_item_1,
-                            aListNearby));
-                    Toast.makeText(getApplicationContext(),
-                            "found device "+device.getName()+" | MAC address: "+device.getAddress(),
-                            Toast.LENGTH_SHORT).show();
-
-                    listViewNearby.setOnItemClickListener(new AdapterView.OnItemClickListener() {
-                        @Override
-                        public void onItemClick(AdapterView<?> list, View view, int position, long id) {
-                            // Get the selected item text from ListView
-                            BluetoothDevice selectedItem = (BluetoothDevice) list.getItemAtPosition(position);
-                            if(state_current == STATE_DISCOVERABLE || state_current == STATE_NOT_DISCOVERABLE ||
-                                    state_current == STATE_SCANNING){
-                                connectAsClient(selectedItem);
-                            }
-
-                            Log.i("HelloListView",
-                                    "You clicked Item: " + id + " at position:" + position);
-                            Toast.makeText(
-                                    getApplicationContext(),
-                                    "Clicked at position "+position+ " the device: "+ selectedItem.getName(),
-                                    Toast.LENGTH_SHORT)
-                                    .show();
-                        }
-                    });
+                            aList_string));
                 }
             }
             else if (BluetoothAdapter.ACTION_DISCOVERY_STARTED.equals(action)){
