@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">BluetoothConnection</string>
     <string name="list_paired">Show paired devices</string>
+    <string name="intro_text">Wait for a device request \n or tap button to scan</string>
 </resources>
