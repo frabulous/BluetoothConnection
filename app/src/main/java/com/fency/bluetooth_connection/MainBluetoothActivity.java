@@ -13,6 +13,8 @@ import android.content.IntentFilter;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
 import android.support.design.widget.FloatingActionButton;
 import android.support.design.widget.Snackbar;
 import android.support.v7.app.AppCompatActivity;
@@ -21,34 +23,38 @@ import android.util.Log;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
-import android.view.Window;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.InputStream;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Set;
-import java.util.Timer;
-import java.util.TimerTask;
 import java.util.UUID;
-
-import static android.content.ContentValues.TAG;
 
 public class MainBluetoothActivity extends AppCompatActivity {
 
     private static final UUID appUUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
 
-    private static final int ENABLE_BT_REQUEST_CODE = 1, ACTION_REQUEST_MULTIPLE_PERMISSION = 3;
-
-    private static final int STATE_BT_OFF = -1, STATE_NOT_DISCOVERABLE = 0,
-            STATE_SERVER = 2, STATE_SCANNING = 3, STATE_CONNECTING = 4, STATE_CONNECTED = 5;
-
+    private static final int DEVICE_DISCOVERABLE_TIME = 120; //seconds
     private static final long CONNECTION_TRIAL_TIMEOUT = 6000; //milliseconds
 
-    private int state_current = -5;
+    private static final int ENABLE_BT_REQUEST_CODE = 1, ACTION_REQUEST_MULTIPLE_PERMISSION = 3;
+
+    //Used when the device is connected
+    private static final String TAG = "MY_APP_DEBUG_TAG";
+    private Handler messageHandler; // handler that gets info from Bluetooth service
+
+    private static final int STATE_BT_OFF = -1, STATE_NOT_DISCOVERABLE = 0, STATE_DISCOVERABLE= 1,
+            STATE_SERVER = 2, STATE_SCANNING = 3, STATE_CONNECTING = 4, STATE_CONNECTED = 5,
+            STATE_CONNECTION_FAILED = -5;
+
+    private int state_current = -10;
 
     private TextView tv_intro;
     private String myMacAddress, opponentMacAddress, myName;
@@ -60,12 +66,16 @@ public class MainBluetoothActivity extends AppCompatActivity {
     private FloatingActionButton discoverBtn;
 
     private ConnectThread clientThread;
+    private ConnectedThread communicationThread;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main_bluetooth);
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
+
+        //activity = this;
 
         listViewPaired = findViewById(R.id.lv_paired);
         listViewNearby = findViewById(R.id.lv_nearby);
@@ -142,27 +152,40 @@ public class MainBluetoothActivity extends AppCompatActivity {
 
     private int getStartingState(){
         int state = STATE_BT_OFF;
-        //TODO: check if this condition is the right one
-        if (bluetoothAdapter.getScanMode() != BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE)
+
+        if (bluetoothAdapter.isEnabled()){
             state = STATE_NOT_DISCOVERABLE;
+        }
+        //TODO: check if this condition is the right one
+        if (bluetoothAdapter.getScanMode() == BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE) {
+            state = STATE_DISCOVERABLE;
+        }
 
         return state;
     }
 
     private void goToState(int targetState){
-        state_current = targetState;
-        this.setTitle(getLabelFromState(state_current));
+        if (targetState == STATE_CONNECTION_FAILED){
+            goToState(getStartingState());
+        }
+        else {
+            state_current = targetState;
+            this.setTitle(getLabelFromState(state_current));
+        }
+
     }
 
     private String getLabelFromState(int state){
-        String res = "";
-
+        String res;
         switch (state){
             case STATE_BT_OFF:
                 res = "BT off";
                 break;
             case STATE_NOT_DISCOVERABLE:
                 res = "Device not discoverable";
+                break;
+            case STATE_DISCOVERABLE:
+                res = "Device discoverable";
                 break;
             case STATE_SERVER:
                 res = "Server mode";
@@ -176,8 +199,13 @@ public class MainBluetoothActivity extends AppCompatActivity {
             case STATE_CONNECTED:
                 res = "Connected";
                 break;
+            case STATE_CONNECTION_FAILED:
+                res = "Connection failed";
+                break;
+            default:
+                res = "State unknown";
+                break;
         }
-
         return res;
     }
 
@@ -185,10 +213,11 @@ public class MainBluetoothActivity extends AppCompatActivity {
         discoverBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                if(state_current <= STATE_NOT_DISCOVERABLE){
+                if(state_current == STATE_BT_OFF || state_current == STATE_NOT_DISCOVERABLE){
                     setDiscoverable();
                 }
                 else if (state_current == STATE_SERVER) {
+                    aListNearby.clear();
                     //start discovering nearby devices
                     if (startScanning()) {
                         discoverBtn.setBackgroundTintList(ColorStateList.valueOf(Color.BLUE));
@@ -234,7 +263,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
 
     private void setDiscoverable(){
         Intent discoveryIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
-        discoveryIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 180);
+        discoveryIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, DEVICE_DISCOVERABLE_TIME);
         startActivity(discoveryIntent);
     }
 
@@ -265,33 +294,19 @@ public class MainBluetoothActivity extends AppCompatActivity {
                 "trying connection as client to "+ targetDevice.getName(),
                 Toast.LENGTH_SHORT)
                 .show();
-        //Create a timer to set a timeout to connection thread
-        Timer myTimer = new Timer();
-        myTimer.schedule(new TimerTask() {
-            @Override
-            public void run() {
-                if (clientThread.isAlive()) {
-                    Toast.makeText(
-                            getApplicationContext(),
-                            "connection timeout ",
-                            Toast.LENGTH_SHORT)
-                            .show();
-                    clientThread.interrupt();
-                }
-            }
-        }, CONNECTION_TRIAL_TIMEOUT); //milliseconds
     }
 
     private void manageMyConnectedSocket(BluetoothSocket socket){
-        goToState(STATE_CONNECTED);
         bluetoothSocket = socket;
-        Toast.makeText(
-                getApplicationContext(),
-                "connected to device ",
-                Toast.LENGTH_LONG)
-                .show();
-        //if(isClient)
-        //else
+
+        communicationThread = new ConnectedThread(bluetoothSocket);
+        communicationThread.start();
+
+        String msg = "ciao";
+
+        // Makes the app crash
+        //communicationThread.write(msg.getBytes(	StandardCharsets.UTF_8));
+
         //TODO
         //https://developer.android.com/guide/topics/connectivity/bluetooth
     }
@@ -474,7 +489,100 @@ public class MainBluetoothActivity extends AppCompatActivity {
             } catch (IOException e) {
                 Log.e(TAG, "Could not close the client socket", e);
             }
-            setDiscoverable();
+            goToState(STATE_CONNECTION_FAILED);
+        }
+    }
+
+    // Defines several constants used when transmitting messages between the
+    // service and the UI.
+    private interface MessageConstants {
+        int MESSAGE_READ = 0;
+        int MESSAGE_WRITE = 1;
+        int MESSAGE_TOAST = 2;
+        // ... (Add other message types here as needed.)
+    }
+
+    // This thread is launched when bluetooth socket is created.
+    // It handles the communication between devices.
+    private class ConnectedThread extends Thread {
+        private final BluetoothSocket mmSocket;
+        private final InputStream mmInStream;
+        private final OutputStream mmOutStream;
+        private byte[] mmBuffer; // mmBuffer store for the stream
+
+        public ConnectedThread(BluetoothSocket socket) {
+            mmSocket = socket;
+            InputStream tmpIn = null;
+            OutputStream tmpOut = null;
+
+            // Get the input and output streams; using temp objects because
+            // member streams are final.
+            try {
+                tmpIn = socket.getInputStream();
+            } catch (IOException e) {
+                Log.e(TAG, "Error occurred when creating input stream", e);
+            }
+            try {
+                tmpOut = socket.getOutputStream();
+            } catch (IOException e) {
+                Log.e(TAG, "Error occurred when creating output stream", e);
+            }
+
+            mmInStream = tmpIn;
+            mmOutStream = tmpOut;
+        }
+
+        public void run() {
+            mmBuffer = new byte[1024];
+            int numBytes; // bytes returned from read()
+
+            // Keep listening to the InputStream until an exception occurs.
+            while (true) {
+                try {
+                    // Read from the InputStream.
+                    numBytes = mmInStream.read(mmBuffer);
+                    // Send the obtained bytes to the UI activity.
+                    Message readMsg = messageHandler.obtainMessage(
+                            MessageConstants.MESSAGE_READ, numBytes, -1,
+                            mmBuffer);
+                    readMsg.sendToTarget();
+                } catch (IOException e) {
+                    Log.d(TAG, "Input stream was disconnected", e);
+                    break;
+                }
+            }
+        }
+
+        // Call this from the main activity to send data to the remote device.
+        public void write(byte[] bytes) {
+            try {
+                mmOutStream.write(bytes);
+
+                // Share the sent message with the UI activity.
+                Message writtenMsg = messageHandler.obtainMessage(
+                        MessageConstants.MESSAGE_WRITE, -1, -1, mmBuffer);
+                writtenMsg.sendToTarget();
+            } catch (IOException e) {
+                Log.e(TAG, "Error occurred when sending data", e);
+
+                // Send a failure message back to the activity.
+                Message writeErrorMsg =
+                        messageHandler.obtainMessage(MessageConstants.MESSAGE_TOAST);
+                Bundle bundle = new Bundle();
+                bundle.putString("toast",
+                        "Couldn't send data to the other device");
+                writeErrorMsg.setData(bundle);
+                messageHandler.sendMessage(writeErrorMsg);
+            }
+        }
+
+        // Call this method from the main activity to shut down the connection.
+        public void cancel() {
+            try {
+                mmSocket.close();
+            } catch (IOException e) {
+                Log.e(TAG, "Could not close the connect socket", e);
+            }
         }
     }
 
@@ -534,8 +642,11 @@ public class MainBluetoothActivity extends AppCompatActivity {
                     case BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE:
                         Toast.makeText(getApplicationContext(),
                                 "Device is now discoverable",Toast.LENGTH_SHORT).show();
+                        goToState(STATE_DISCOVERABLE);
                         // go in server mode when bluetooth is on and the device is discoverable
-                        connectAsServer();
+                        if (state_current != STATE_SERVER) {
+                            connectAsServer();
+                        }
                         break;
                     case BluetoothAdapter.SCAN_MODE_CONNECTABLE:
                         goToState(STATE_NOT_DISCOVERABLE);
@@ -556,6 +667,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
                         break;
                     case BluetoothAdapter.STATE_CONNECTED:
                         Toast.makeText(getApplicationContext(), "Connesso!", Toast.LENGTH_SHORT).show();
+                        goToState(STATE_CONNECTED);
                         break;
                     case BluetoothAdapter.STATE_DISCONNECTING:
                         break;
