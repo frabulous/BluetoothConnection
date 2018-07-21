@@ -216,7 +216,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
                 if(state_current == STATE_BT_OFF || state_current == STATE_NOT_DISCOVERABLE){
                     setDiscoverable();
                 }
-                else if (state_current == STATE_SERVER) {
+                else if (state_current == STATE_SERVER || state_current == STATE_DISCOVERABLE) {
                     aListNearby.clear();
                     //start discovering nearby devices
                     if (startScanning()) {
@@ -230,8 +230,16 @@ public class MainBluetoothActivity extends AppCompatActivity {
                 else if (state_current == STATE_SCANNING) {
                     Snackbar.make(view, "Still scanning!", Snackbar.LENGTH_LONG).show();
                 }
+                else if (state_current == STATE_CONNECTED){
+                    String msg = "ciao";
+                    Snackbar.make(view, "Stai salutando", Snackbar.LENGTH_SHORT).show();
+
+                    //TODO: makes the app crash!
+                    //communicationThread.write(msg.getBytes());
+                }
                 else {
                     //TODO
+                    Snackbar.make(view, "TODO!", Snackbar.LENGTH_SHORT).show();
                 }
             }
         });
@@ -269,7 +277,6 @@ public class MainBluetoothActivity extends AppCompatActivity {
 
     private boolean startScanning(){
         tv_intro.setVisibility(View.INVISIBLE);
-        //listViewPaired.setOnItemClickListener(null);
         listViewPaired.setVisibility(View.INVISIBLE);
         listViewNearby.setVisibility(View.VISIBLE);
         return bluetoothAdapter.startDiscovery();
@@ -302,7 +309,16 @@ public class MainBluetoothActivity extends AppCompatActivity {
         communicationThread = new ConnectedThread(bluetoothSocket);
         communicationThread.start();
 
-        String msg = "ciao";
+        // Makes the app do not crash! Because goToState() isn't called in connectedThread
+        runOnUiThread(new Runnable(){
+            @Override
+            public void run() {
+                goToState(STATE_CONNECTED);
+                Toast.makeText(getApplicationContext(),
+                        "Connesso via socket",
+                        Toast.LENGTH_SHORT).show();
+            }});
+
 
         // Makes the app crash
         //communicationThread.write(msg.getBytes(	StandardCharsets.UTF_8));
@@ -546,6 +562,23 @@ public class MainBluetoothActivity extends AppCompatActivity {
                             MessageConstants.MESSAGE_READ, numBytes, -1,
                             mmBuffer);
                     readMsg.sendToTarget();
+
+                    //
+                    numBytes = mmInStream.read(mmBuffer);
+                    String strReceived = new String(mmBuffer, 0, numBytes);
+                    final String msgReceived = String.valueOf(numBytes) +
+                            " bytes received:\n"
+                            + strReceived;
+
+                    runOnUiThread(new Runnable(){
+                        @Override
+                        public void run() {
+                            Toast.makeText(getApplicationContext(),
+                                    msgReceived,
+                                    Toast.LENGTH_LONG).show();
+                        }});
+                    //
+
                 } catch (IOException e) {
                     Log.d(TAG, "Input stream was disconnected", e);
                     break;
@@ -667,7 +700,7 @@ public class MainBluetoothActivity extends AppCompatActivity {
                         break;
                     case BluetoothAdapter.STATE_CONNECTED:
                         Toast.makeText(getApplicationContext(), "Connesso!", Toast.LENGTH_SHORT).show();
-                        goToState(STATE_CONNECTED);
+                        //goToState(STATE_CONNECTED);
                         break;
                     case BluetoothAdapter.STATE_DISCONNECTING:
                         break;
